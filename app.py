@@ -1,6 +1,5 @@
 # language: Python 3.11+, file: app.py, target: Windows/Linux/Mac
 # YouTube downloader backend — yt-dlp + Flask
-# deps: pip install flask flask-cors yt-dlp gunicorn
 
 import re
 import uuid
@@ -28,12 +27,19 @@ if not (BASE_DIR / 'ffmpeg.exe').exists():
         FFMPEG_DIR = str(Path(sys_ffmpeg).parent)
 print(f"[FFmpeg] {FFMPEG_DIR}")
 
-# Cookie file check (YouTube bot block hatane ke liye)
-COOKIE_FILE = BASE_DIR / 'www.youtube.com_cookies.txt'
-if COOKIE_FILE.exists():
-    print(f"[Cookies] Loaded from {COOKIE_FILE.name}")
+# COOKIES SETUP (Environment Variable ya File se)
+COOKIE_FILE = BASE_DIR / 'cookies.txt'
+env_cookies = os.environ.get('YOUTUBE_COOKIES')
+if env_cookies:
+    with open(COOKIE_FILE, 'w', encoding='utf-8') as f:
+        f.write(env_cookies)
+    print("[Cookies] Loaded from Environment Variable")
+elif (BASE_DIR / 'www.youtube.com_cookies.txt').exists():
+    shutil.copy(BASE_DIR / 'www.youtube.com_cookies.txt', COOKIE_FILE)
+    print("[Cookies] Loaded from uploaded file")
 else:
-    print("[Cookies] WARNING: Cookie file not found!")
+    COOKIE_FILE = None
+    print("[Cookies] WARNING: No cookies found!")
 
 # job_id -> {status, progress, filename, path, error}
 JOBS = {}
@@ -73,24 +79,26 @@ def safe_filename(name: str) -> str:
 # ============================================================
 #  YT-DLP INFO EXTRACTION
 # ============================================================
-def extract_info(url: str):
+def get_base_opts():
     opts = {
         'quiet': True,
         'no_warnings': True,
-        'skip_download': True,
         'noplaylist': True,
         'ffmpeg_location': FFMPEG_DIR,
-        # Player client bypasses YouTube bot detection
-        'extractor_args': {'youtube': ['player_client=android,web']},
+        # PO Token bypass (mweb, tv, web_safari clients use karega)
+        'extractor_args': {'youtube': ['player_client=mweb,tv,web_safari']},
     }
-    if COOKIE_FILE.exists():
+    if COOKIE_FILE and COOKIE_FILE.exists():
         opts['cookiefile'] = str(COOKIE_FILE)
+    return opts
 
+def extract_info(url: str):
+    opts = get_base_opts()
+    opts['skip_download'] = True
     with yt_dlp.YoutubeDL(opts) as ydl:
         return ydl.extract_info(url, download=False)
 
 def build_quality_list(info):
-    """Return { 'mp4': [...], 'mp3': [...] } with only actually available qualities."""
     formats = info.get('formats') or []
 
     # ---- MP4: unique heights ----
@@ -116,7 +124,6 @@ def build_quality_list(info):
         max_h = max(heights.keys())
         for h in sorted(heights.keys(), reverse=True):
             info_h = heights[h]
-            label = f"{h}p"
             sub_parts = []
             if h >= 2160: sub_parts.append('4K Ultra HD')
             elif h >= 1440: sub_parts.append('2K Quad HD')
@@ -129,7 +136,7 @@ def build_quality_list(info):
                 sub_parts.append(human_size(info_h['filesize']))
             mp4_list.append({
                 'id': str(h),
-                'label': label,
+                'label': f"{h}p",
                 'sub': ' · '.join(sub_parts),
                 'badge': 'BEST' if h == max_h else None,
             })
@@ -177,6 +184,9 @@ def run_download(job_id, url, fmt, quality):
             JOBS[job_id]['progress'] = 0
 
         outtmpl = str(DOWNLOAD_DIR / f"{job_id}_%(title)s.%(ext)s")
+        ydl_opts = get_base_opts()
+        ydl_opts['outtmpl'] = outtmpl
+        ydl_opts['progress_hooks'] = [lambda d: _hook(job_id, d)]
 
         if fmt == 'mp4':
             h = int(quality)
@@ -187,37 +197,16 @@ def run_download(job_id, url, fmt, quality):
                 f"/best[height<={h}]"
                 f"/best"
             )
-            ydl_opts = {
-                'format': fmt_selector,
-                'outtmpl': outtmpl,
-                'merge_output_format': 'mp4',
-                'quiet': True,
-                'no_warnings': True,
-                'noplaylist': True,
-                'ffmpeg_location': FFMPEG_DIR,
-                'extractor_args': {'youtube': ['player_client=android,web']},
-                'progress_hooks': [lambda d: _hook(job_id, d)],
-            }
+            ydl_opts['format'] = fmt_selector
+            ydl_opts['merge_output_format'] = 'mp4'
         else:  # mp3
             bitrate = int(quality)
-            ydl_opts = {
-                'format': 'bestaudio/best',
-                'outtmpl': outtmpl,
-                'quiet': True,
-                'no_warnings': True,
-                'noplaylist': True,
-                'ffmpeg_location': FFMPEG_DIR,
-                'extractor_args': {'youtube': ['player_client=android,web']},
-                'postprocessors': [{
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'mp3',
-                    'preferredquality': str(bitrate),
-                }],
-                'progress_hooks': [lambda d: _hook(job_id, d)],
-            }
-
-        if COOKIE_FILE.exists():
-            ydl_opts['cookiefile'] = str(COOKIE_FILE)
+            ydl_opts['format'] = 'bestaudio/best'
+            ydl_opts['postprocessors'] = [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': str(bitrate),
+            }]
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.extract_info(url, download=True)
