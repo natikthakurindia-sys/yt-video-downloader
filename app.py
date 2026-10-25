@@ -19,7 +19,7 @@ BASE_DIR     = Path(__file__).parent.resolve()
 DOWNLOAD_DIR = BASE_DIR / "downloads"
 DOWNLOAD_DIR.mkdir(exist_ok=True)
 
-# FFmpeg Setup
+# FFmpeg Setup (Windows aur Render/Linux dono ke liye)
 FFMPEG_DIR = str(BASE_DIR)
 if not (BASE_DIR / 'ffmpeg.exe').exists():
     sys_ffmpeg = shutil.which('ffmpeg')
@@ -27,11 +27,15 @@ if not (BASE_DIR / 'ffmpeg.exe').exists():
         FFMPEG_DIR = str(Path(sys_ffmpeg).parent)
 print(f"[FFmpeg] {FFMPEG_DIR}")
 
-# COOKIES SETUP (Direct GitHub file se)
+# COOKIES SETUP (Render Secret File ya Local File se)
 COOKIE_FILE = None
-if (BASE_DIR / 'www.youtube.com_cookies.txt').exists():
+secret_path = Path('/etc/secrets/www.youtube.com_cookies.txt')
+if secret_path.exists():
+    COOKIE_FILE = secret_path
+    print("[Cookies] Loaded from /etc/secrets/")
+elif (BASE_DIR / 'www.youtube.com_cookies.txt').exists():
     COOKIE_FILE = BASE_DIR / 'www.youtube.com_cookies.txt'
-    print("[Cookies] Loaded from www.youtube.com_cookies.txt")
+    print("[Cookies] Loaded from repo folder")
 elif (BASE_DIR / 'cookies.txt').exists():
     COOKIE_FILE = BASE_DIR / 'cookies.txt'
     print("[Cookies] Loaded from cookies.txt")
@@ -246,4 +250,4 @@ def api_file(job_id):
 # ============================================================
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
+    app.run(host='0.0.0.0', port=port, debug=False, threaded=True) 
