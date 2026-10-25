@@ -2,16 +2,14 @@
 # YouTube downloader backend — yt-dlp + Flask
 #
 # deps:
-#   pip install flask flask-cors yt-dlp
-#   FFmpeg isi folder me hona chahiye (ffmpeg.exe, ffplay.exe, ffprobe.exe)
-#
-# run:
-#   python app.py
-#   open http://127.0.0.1:5000
+#   pip install flask flask-cors yt-dlp gunicorn
 
 import re
 import uuid
 import threading
+import os
+import shutil
+import sys
 from pathlib import Path
 from flask import Flask, request, jsonify, send_file, abort
 from flask_cors import CORS
@@ -24,9 +22,20 @@ BASE_DIR     = Path(__file__).parent.resolve()
 DOWNLOAD_DIR = BASE_DIR / "downloads"
 DOWNLOAD_DIR.mkdir(exist_ok=True)
 
-# FFmpeg isi folder me hai — app.py ke saath
+# FFmpeg Setup (Windows aur Render/Linux dono ke liye)
 FFMPEG_DIR = str(BASE_DIR)
+if not (BASE_DIR / 'ffmpeg.exe').exists():
+    sys_ffmpeg = shutil.which('ffmpeg')
+    if sys_ffmpeg:
+        FFMPEG_DIR = str(Path(sys_ffmpeg).parent)
 print(f"[FFmpeg] {FFMPEG_DIR}")
+
+# Cookie file check (YouTube bot block hatane ke liye)
+COOKIE_FILE = BASE_DIR / 'www.youtube.com_cookies.txt'
+if COOKIE_FILE.exists():
+    print(f"[Cookies] Loaded from {COOKIE_FILE.name}")
+else:
+    print("[Cookies] WARNING: Cookie file not found!")
 
 # job_id -> {status, progress, filename, path, error}
 JOBS = {}
@@ -74,6 +83,9 @@ def extract_info(url: str):
         'noplaylist': True,
         'ffmpeg_location': FFMPEG_DIR,
     }
+    if COOKIE_FILE.exists():
+        opts['cookiefile'] = str(COOKIE_FILE)
+
     with yt_dlp.YoutubeDL(opts) as ydl:
         return ydl.extract_info(url, download=False)
 
@@ -201,6 +213,10 @@ def run_download(job_id, url, fmt, quality):
                 'progress_hooks': [lambda d: _hook(job_id, d)],
             }
 
+        # COOKIE FILE ADDED HERE FOR DOWNLOAD
+        if COOKIE_FILE.exists():
+            ydl_opts['cookiefile'] = str(COOKIE_FILE)
+
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.extract_info(url, download=True)
             path = _resolve_final_path(job_id)
@@ -318,7 +334,8 @@ def api_file(job_id):
 #  ENTRY
 # ============================================================
 if __name__ == '__main__':
-    print("LUNAR YouTube Downloader — server starting")
+    print("YouTube Downloader — server starting")
     print(f"  downloads dir: {DOWNLOAD_DIR}")
     print("  open http://127.0.0.1:5000")
-    app.run(host='127.0.0.1', port=5000, debug=False, threaded=True)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
