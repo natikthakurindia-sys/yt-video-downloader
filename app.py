@@ -1,8 +1,6 @@
 # language: Python 3.11+, file: app.py, target: Windows/Linux/Mac
 # YouTube downloader backend — yt-dlp + Flask
-#
-# deps:
-#   pip install flask flask-cors yt-dlp gunicorn
+# deps: pip install flask flask-cors yt-dlp gunicorn
 
 import re
 import uuid
@@ -82,6 +80,8 @@ def extract_info(url: str):
         'skip_download': True,
         'noplaylist': True,
         'ffmpeg_location': FFMPEG_DIR,
+        # Player client bypasses YouTube bot detection
+        'extractor_args': {'youtube': ['player_client=android,web']},
     }
     if COOKIE_FILE.exists():
         opts['cookiefile'] = str(COOKIE_FILE)
@@ -107,33 +107,32 @@ def build_quality_list(info):
         if h not in heights or score > heights[h]['score']:
             heights[h] = {
                 'score': score,
-                'id': f['format_id'],
-                'ext': f.get('ext', 'mp4'),
                 'fps': f.get('fps'),
                 'filesize': f.get('filesize') or f.get('filesize_approx'),
-                'has_audio': has_audio,
             }
 
     mp4_list = []
-    for h in sorted(heights.keys(), reverse=True):
-        info_h = heights[h]
-        label = f"{h}p"
-        sub_parts = []
-        if h >= 2160: sub_parts.append('4K Ultra HD')
-        elif h >= 1440: sub_parts.append('2K Quad HD')
-        elif h >= 1080: sub_parts.append('Full HD')
-        elif h >= 720: sub_parts.append('HD')
-        else: sub_parts.append('SD')
-        if info_h['fps'] and info_h['fps'] >= 50:
-            sub_parts.append(f"{int(info_h['fps'])}fps")
-        if info_h['filesize']:
-            sub_parts.append(human_size(info_h['filesize']))
-        mp4_list.append({
-            'id': str(h),
-            'label': label,
-            'sub': ' · '.join(sub_parts),
-            'badge': 'BEST' if h == max(heights.keys()) else None,
-        })
+    if heights:
+        max_h = max(heights.keys())
+        for h in sorted(heights.keys(), reverse=True):
+            info_h = heights[h]
+            label = f"{h}p"
+            sub_parts = []
+            if h >= 2160: sub_parts.append('4K Ultra HD')
+            elif h >= 1440: sub_parts.append('2K Quad HD')
+            elif h >= 1080: sub_parts.append('Full HD')
+            elif h >= 720: sub_parts.append('HD')
+            else: sub_parts.append('SD')
+            if info_h['fps'] and info_h['fps'] >= 50:
+                sub_parts.append(f"{int(info_h['fps'])}fps")
+            if info_h['filesize']:
+                sub_parts.append(human_size(info_h['filesize']))
+            mp4_list.append({
+                'id': str(h),
+                'label': label,
+                'sub': ' · '.join(sub_parts),
+                'badge': 'BEST' if h == max_h else None,
+            })
 
     # ---- MP3: derive from best audio stream ----
     best_audio_abr = 0
@@ -181,10 +180,12 @@ def run_download(job_id, url, fmt, quality):
 
         if fmt == 'mp4':
             h = int(quality)
+            # Flexible format selector jo fail nahi hota
             fmt_selector = (
-                f"best[height<={h}][ext=mp4][acodec!=none][vcodec!=none]"
-                f"/bestvideo[height<={h}][ext=mp4]+bestaudio[ext=m4a]"
+                f"best[height<={h}][ext=mp4]"
+                f"/bestvideo[height<={h}]+bestaudio"
                 f"/best[height<={h}]"
+                f"/best"
             )
             ydl_opts = {
                 'format': fmt_selector,
@@ -194,6 +195,7 @@ def run_download(job_id, url, fmt, quality):
                 'no_warnings': True,
                 'noplaylist': True,
                 'ffmpeg_location': FFMPEG_DIR,
+                'extractor_args': {'youtube': ['player_client=android,web']},
                 'progress_hooks': [lambda d: _hook(job_id, d)],
             }
         else:  # mp3
@@ -205,6 +207,7 @@ def run_download(job_id, url, fmt, quality):
                 'no_warnings': True,
                 'noplaylist': True,
                 'ffmpeg_location': FFMPEG_DIR,
+                'extractor_args': {'youtube': ['player_client=android,web']},
                 'postprocessors': [{
                     'key': 'FFmpegExtractAudio',
                     'preferredcodec': 'mp3',
@@ -213,7 +216,6 @@ def run_download(job_id, url, fmt, quality):
                 'progress_hooks': [lambda d: _hook(job_id, d)],
             }
 
-        # COOKIE FILE ADDED HERE FOR DOWNLOAD
         if COOKIE_FILE.exists():
             ydl_opts['cookiefile'] = str(COOKIE_FILE)
 
@@ -338,4 +340,4 @@ if __name__ == '__main__':
     print(f"  downloads dir: {DOWNLOAD_DIR}")
     print("  open http://127.0.0.1:5000")
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
+    app.run(host='0.0.0.0', port=port, debug=False, threaded=True) 
